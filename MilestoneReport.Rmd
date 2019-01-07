@@ -1,0 +1,238 @@
+---
+title: "Data Science Capstone - Milestone Report"
+author: "Michail Xenakis"
+date: "08/01/2019"
+output: html_document
+---
+
+## Executive Summary
+
+This present report is the milestone report for the capstone project. The main tasks that are being accomplished here are the following:
+
+- Exploratory analysis - perform a thorough exploratory analysis of the data, understanding the distribution of words and relationship between the words in the corpora.
+
+- Understand frequencies of words and word pairs - build figures and tables to understand variation in the frequencies of words and word pairs in the data.
+
+The report ends with a section that mentions the future work on the project.
+
+## Load the required packages
+In this section we gather all the required packages for the analysis.
+```{r loadpackages, results = 'hide', message = FALSE, warning = FALSE}
+require(dplyr)
+require(stringi)
+require(tm)
+require(RWeka)
+require(ggplot2)
+```
+
+## Load and clean the data
+
+The training data which will be the basis for the capstone project is on this [Link](https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip). The zip file contains text from the news, blogs and twitter in four languages (English, German, Finnish and Russian). All work will be done in the English language. In this respect, the datasets that are in English will be used (en_US folder). First we will read the .txt files.
+
+```{r readfiles}
+blgCon <- file("final/en_US/en_US.blogs.txt", open = "r")
+blg <- readLines(blgCon, encoding = "UTF-8", skipNul = TRUE)
+close(blgCon)
+
+nwsCon <- file("final/en_US/en_US.news.txt", open = "r")
+nws <- readLines(nwsCon, encoding = "UTF-8", skipNul = TRUE)
+close(nwsCon)
+
+twterCon <- file("final/en_US/en_US.twitter.txt", open = "r")
+twter <- readLines(twterCon, encoding = "UTF-8", skipNul = TRUE)
+close(twterCon)
+
+rm(blgCon)
+rm(nwsCon)
+rm(twterCon)
+```
+
+By using the 'stringi' package we will retrieve and show basic stats for the three .txt files.
+
+- File size in MBs
+
+```{r filesize}
+blgSize <- file.info("final/en_US/en_US.blogs.txt")$size/1024^2
+nwsSize <- file.info("final/en_US/en_US.news.txt")$size/1024^2
+twterSize <- file.info("final/en_US/en_US.twitter.txt")$size/1024^2
+```
+
+- Number of lines in text files
+
+```{r filelines}
+blgLines <- length(blg)
+nwsLines <- length(nws)
+twterLines <- length(twter)
+```
+
+- Number of words in text files
+
+```{r wordnum}
+blgWords <- sum(stri_count_words(blg))
+nwsWords <- sum(stri_count_words(nws))
+twterWords <- sum(stri_count_words(twter))
+```
+
+- Information for the three text files:
+
+|  File    | Size in MBs  | Number of Lines | Number of Words |
+| :------: | :----------: | :-------------: | :-------------: |
+|  Blogs   |  `r blgSize` |    `r blgLines` |    `r blgWords` |
+|  News    |  `r nwsSize` |    `r nwsLines` |    `r nwsWords` |
+|  Twitter |`r twterSize` |  `r twterLines` |  `r twterWords` |
+
+```{r removeVars, echo = FALSE}
+rm(blgSize)
+rm(nwsSize)
+rm(twterSize)
+rm(blgLines)
+rm(nwsLines)
+rm(twterLines)
+rm(blgWords)
+rm(nwsWords)
+rm(twterWords)
+```
+
+As we see on the table above, all three text files exceed 500 MBs in size and 100 million words. Since the datasets are massive, we will just get a sample of 0.4% (due to my computer's low memory capabilities) for each text file (~ seventeen thousand lines) to demonstrate our explanatory analysis.
+
+
+```{r sampleText}
+blgSample <- sample(blg, length(blg)*0.004)
+nwsSample <- sample(nws, length(nws)*0.004)
+twterSample <- sample(twter, length(twter)*0.004)
+sampleText <- c(blgSample, nwsSample, twterSample)
+```
+
+```{r removeVars2, echo = FALSE}
+rm(blg)
+rm(nws)
+rm(twter)
+rm(blgSample)
+rm(nwsSample)
+rm(twterSample)
+```
+
+Upon this sampled - merged - text we will first start with the cleaning process. We will use the 'tm' package for this. We start with converting all text into lower case. Then continue by removing punctuation, white spaces, numbers, and various stopwords of the english language. We also remove any bad words that are included in the text. To remove these bad words we googled around for a bad words list and we found the list of bad words (lower case) that is banned by Google on this [Link](https://www.freewebheaders.com/full-list-of-bad-words-banned-by-google/). The work being done is shown in the code chunk below. 
+
+```{r datacleaning}
+sampleTextcorpus <- VCorpus(VectorSource(sampleText))
+sampleTextcorpus <- tm_map(sampleTextcorpus, content_transformer(tolower))
+sampleTextcorpus <- tm_map(sampleTextcorpus, removePunctuation, preserve_intra_word_dashes = TRUE)
+sampleTextcorpus <- tm_map(sampleTextcorpus, stripWhitespace)
+sampleTextcorpus <- tm_map(sampleTextcorpus, removeNumbers)
+sampleTextcorpus <- tm_map(sampleTextcorpus, removeWords, stopwords("english"))
+badWordList <- VectorSource(readLines("final/en_US/full-list-of-bad-words_text-file_2018_07_30.txt"))
+sampleTextcorpus <- tm_map(sampleTextcorpus, removeWords, badWordList)
+```
+
+```{r removeVars3, echo = FALSE}
+rm(badWordList)
+rm(sampleText)
+```
+
+## Exploratory Analysis
+
+Since we processed and cleaned the textual data as described above, we can now proceed in the data exploration, motivated by two questions mentioned in the course readings: 
+
+1. Some words are more frequent than others - what are the distributions of word frequencies?
+
+2. What are the frequencies of 2-grams and 3-grams in the dataset?
+
+Below we present the code chunk to compute the frequencies of N-grams for N = 1 (e.g., chief), N = 2 (e.g., chief executive), N = 3 (e.g., chief executive officer).
+
+```{r tokenization}
+Token1 <- function(x){
+        NGramTokenizer(x, control = Weka_control(min = 1, max = 1))}
+
+Token2 <- function(x){
+        NGramTokenizer(x, control = Weka_control(min = 2, max = 2))}
+
+Token3 <- function(x){
+        NGramTokenizer(x, control = Weka_control(min = 3, max = 3))}
+
+
+gramN_1 <- DocumentTermMatrix(sampleTextcorpus, control = list(tokenize = Token1))
+
+gramN_2 <- DocumentTermMatrix(sampleTextcorpus, control = list(tokenize = Token2))
+
+gramN_3 <- DocumentTermMatrix(sampleTextcorpus, control = list(tokenize = Token3))
+
+```
+
+```{r removeVars4, echo = FALSE}
+rm(Token1)
+rm(Token2)
+rm(Token3)
+```
+
+### 1. Unigrams
+
+```{r unigrams}
+gramN_1FR <- sort(colSums(as.matrix(gramN_1)),decreasing = TRUE)
+gramN_1FRdata <- data.frame(word = names(gramN_1FR), frequency = gramN_1FR)
+head(gramN_1FRdata, 20)
+
+ggplot(data = gramN_1FRdata[1:20,], aes(reorder(word,-frequency), frequency)) +
+        geom_bar(stat = "identity", fill = "#FF6666") +
+        ggtitle("20 Most Frequent Unigrams") +
+        xlab("Unigrams") + ylab("Frequency") +
+        theme_classic() +
+        theme(axis.text.x = element_text(angle = 60, hjust = 1))
+```
+```{r removeVars5, echo = FALSE}
+rm(gramN_1)
+rm(gramN_1FR)
+rm(gramN_1FRdata)
+```
+
+
+### 2. Bigrams
+
+```{r bigrams}
+gramN_2FR <- sort(colSums(as.matrix(gramN_2)),decreasing = TRUE)
+gramN_2FRdata <- data.frame(word = names(gramN_2FR), frequency = gramN_2FR)
+head(gramN_2FRdata, 20)
+
+ggplot(data = gramN_2FRdata[1:20,], aes(reorder(word,-frequency), frequency)) +
+        geom_bar(stat = "identity", fill = "#FF6666") +
+        ggtitle("20 Most Frequent Bigrams") +
+        xlab("Bigrams") + ylab("Frequency") +
+        theme_classic() +
+        theme(axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+```{r removeVars6, echo = FALSE}
+rm(gramN_2)
+rm(gramN_2FR)
+rm(gramN_2FRdata)
+```
+
+### 3. Trigrams
+
+```{r trigrams}
+gramN_3FR <- sort(colSums(as.matrix(gramN_3)),decreasing = TRUE)
+gramN_3FRdata <- data.frame(word = names(gramN_3FR), frequency = gramN_3FR)
+head(gramN_3FRdata, 20)
+
+ggplot(data = gramN_3FRdata[1:20,], aes(reorder(word,-frequency), frequency)) +
+        geom_bar(stat = "identity", fill = "#FF6666") +
+        ggtitle("20 Most Frequent Trigrams") +
+        xlab("Trigrams") + ylab("Frequency") +
+        theme_classic() +
+        theme(axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+```{r removeVars7, echo = FALSE}
+rm(gramN_3)
+rm(gramN_3FR)
+rm(gramN_3FRdata)
+```
+
+## Future Work
+
+- The next steps for the capstone project is to develop a shiny app that deploys a predictive text algorithm. 
+
+- I am planning to use the N-gram model for this prediction algorith, that is, to search for the (most probable) word that goes with the typed word at the Nth level and if not found move to the N-1 level and so forth until a word is predicted at the unigram level (if no word was predicted in the previous levels).
+
+- The shiny app will be accompanied with a presentation that pitches this application.
+
